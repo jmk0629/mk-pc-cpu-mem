@@ -45,11 +45,20 @@ class RestartResult:
 # ----------------------------------------------------------------------------
 def target_usage(target: Target) -> Usage:
     try:
+        if target.type == "system":
+            return _system_usage()
         if target.type == "docker":
             return _docker_usage(target.match)
         return _process_usage(target.match)  # systemd/launchd/process 공통 폴백
     except Exception:  # noqa: BLE001 — 측정 실패가 데몬을 죽이면 안 됨
         return Usage(0.0, 0.0, available=False)
+
+
+def _system_usage() -> Usage:
+    """전체 PC 한 대를 하나의 감시 대상으로. macOS/리눅스 공통(psutil)."""
+    cpu = psutil.cpu_percent(interval=0.5)
+    ram = psutil.virtual_memory().percent
+    return Usage(round(cpu, 1), round(ram, 1))
 
 
 def _docker_usage(name: str) -> Usage:
@@ -108,6 +117,9 @@ def restart_target(target: Target, cfg: Config) -> RestartResult:
     if not cfg.control.allow_service_restart:
         return RestartResult(False, "서비스 재시작이 설정에서 비활성화됨(control.allow_service_restart=false)")
     try:
+        if target.type == "system":
+            # 전체 PC 는 서비스 재시작 대상이 아님 — 재부팅은 /reboot 로만(게이트).
+            return RestartResult(False, "전체 시스템은 재시작 대상이 아닙니다. 재부팅은 /reboot 를 사용하세요.")
         if target.type == "docker":
             return _restart_docker(target.match)
         if target.type == "systemd":

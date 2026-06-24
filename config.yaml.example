@@ -35,12 +35,15 @@ control:
   allow_run_command: false      # 원격 임의 명령 실행(브리지/ MCP). 기본 차단.
   command_allowlist: []         # allow_run_command=true 일 때 실행 허용 명령 prefix 목록
 
-# 감시 대상. type: docker | systemd | launchd | process
-# name 은 알림에 표기되는 이름. match 는 컨테이너/유닛/프로세스 식별자.
+# 감시 대상. type: system | docker | systemd | launchd | process
+#   system  — PC 한 대 전체(CPU/RAM)를 하나의 대상으로(match 무시). 재시작 대신 /reboot.
+#   docker  — 컨테이너(match=컨테이너명), systemd/launchd/process — 유닛/프로세스 매칭.
+# name 은 알림에 표기되는 이름.
 targets:
-  - { name: open-design, type: docker, match: open-design }
-  # - { name: api-server, type: systemd, match: api-server.service }
-  # - { name: worker,     type: process, match: python worker.py }
+  - { name: 내 Mac, type: system, match: local }
+  # - { name: open-design, type: docker, match: open-design }
+  # - { name: api-server,  type: systemd, match: api-server.service }
+  # - { name: worker,      type: process, match: python worker.py }
 
 # OS 기본 동작 서비스는 '시스템 경보' 의 원인 프로세스 집계에서 제외
 exclude_services:
