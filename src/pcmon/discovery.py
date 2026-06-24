@@ -18,21 +18,25 @@ _CMD_TIMEOUT = 15
 
 
 def discover(cfg: Config) -> list[Target]:
-    """설정에 따라 docker/systemd 대상을 발견해 필터링한 Target 목록 반환.
-
-    cfg.remote.host 가 있으면 원격 호스트(ssh)에서 발견 — 현재 PC에서 미니 PC 감시.
-    """
-    host = cfg.remote.host
-    targets: list[Target] = []
+    """레거시 단일 호스트 발견(cfg.discovery.enabled + cfg.remote.host)."""
     if not cfg.discovery.enabled:
-        return targets
+        return []
+    return discover_for(cfg, cfg.remote.host)
+
+
+def discover_for(cfg: Config, host: str) -> list[Target]:
+    """주어진 host 에서 docker/systemd 대상을 발견·필터링(멀티호스트용).
+
+    enabled 여부는 호출자(monitor)가 호스트별로 판단한다. 발견된 Target 은 host 를 갖는다.
+    """
+    targets: list[Target] = []
     if cfg.discovery.docker:
         for name in _filter(_docker_names(host), cfg.exclude_services):
-            targets.append(Target(name=name, type="docker", match=name))
+            targets.append(Target(name=name, type="docker", match=name, host=host))
     if cfg.discovery.systemd:
         for unit in _filter(_systemd_units(host), cfg.exclude_services):
             display = unit[:-len(".service")] if unit.endswith(".service") else unit
-            targets.append(Target(name=display, type="systemd", match=unit))
+            targets.append(Target(name=display, type="systemd", match=unit, host=host))
     return targets
 
 

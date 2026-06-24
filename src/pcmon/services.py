@@ -66,7 +66,9 @@ class RestartResult:
 # ----------------------------------------------------------------------------
 # 사용률 측정
 # ----------------------------------------------------------------------------
-def target_usage(target: Target, host: str = "") -> Usage:
+def target_usage(target: Target, host: str | None = None) -> Usage:
+    # host 인자는 하위호환용. 기본은 target.host 사용(멀티호스트).
+    host = target.host if host is None else host
     try:
         if target.type == "system":
             return _remote_system_usage(host) if host else _system_usage()
@@ -229,7 +231,7 @@ def remote_top_processes(host: str, count: int, exclude: list[str] | None = None
 def restart_target(target: Target, cfg: Config) -> RestartResult:
     if not cfg.control.allow_service_restart:
         return RestartResult(False, "서비스 재시작이 설정에서 비활성화됨(control.allow_service_restart=false)")
-    host = cfg.remote.host
+    host = target.host or cfg.remote.host
     try:
         if target.type == "system":
             return RestartResult(False, "전체 시스템은 재시작 대상이 아닙니다. 재부팅은 /reboot 를 사용하세요.")

@@ -11,10 +11,8 @@ import signal
 import time
 from pathlib import Path
 
-import time
-
 from . import discovery, metrics, notifier as nf, services
-from .config import Config, Target
+from .config import Config, HostConfig, Target
 from .notifier import Notifier, restart_buttons
 from .state import Event, StateMachine
 from .telegram_bot import TelegramBot
@@ -22,89 +20,109 @@ from .telegram_bot import TelegramBot
 log = logging.getLogger("pcmon.monitor")
 
 
+def _tid(t: Target) -> str:
+    """타겟 고유 키(멀티호스트 충돌 방지). 콜백 데이터로도 사용."""
+    return f"{t.host}|{t.name}"
+
+
+def _label(t: Target) -> str:
+    return f"{t.name} @{t.host}" if t.host else t.name
+
+
 class Monitor:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.notifier = Notifier(cfg)
         self.state = StateMachine(cfg)
-        self._explicit: dict[str, Target] = {t.name: t for t in cfg.targets}
-        self.targets: dict[str, Target] = dict(self._explicit)
+        self.targets: dict[str, Target] = {}
         self._last_discovery = 0.0
         self._running = True
-        self._sys_alerted = False
+        self._sys_alerted: dict[str, bool] = {}   # host alias -> 경보중 여부
         self._refresh_targets(force=True)
 
+    # ---- 타겟 구성(멀티호스트) ----
     def _refresh_targets(self, force: bool = False) -> None:
-        """명시적 타겟 + (활성화 시) 자동 발견 타겟 병합. 주기적으로 재발견."""
-        if not self.cfg.discovery.enabled:
-            return
+        """hosts 별로 system + 명시적 + (활성 시)자동발견 타겟을 병합. 주기적 재발견."""
         now = time.monotonic()
         if not force and (now - self._last_discovery) < self.cfg.discovery.refresh_minutes * 60:
             return
         self._last_discovery = now
-        merged = dict(self._explicit)  # 명시적 타겟 우선
-        try:
-            for t in discovery.discover(self.cfg):
-                merged.setdefault(t.name, t)
-        except Exception as e:  # noqa: BLE001 — 발견 실패가 데몬을 죽이면 안 됨
-            log.warning("자동 발견 실패: %s", e)
+        merged: dict[str, Target] = {}
+        for h in self.cfg.hosts:
+            if h.system:
+                t = Target(name=h.name, type="system", match="", host=h.host)
+                merged[_tid(t)] = t
+            for t in h.targets:
+                merged[_tid(t)] = t
+            if h.discovery:
+                try:
+                    for t in discovery.discover_for(self.cfg, h.host):
+                        merged.setdefault(_tid(t), t)
+                except Exception as e:  # noqa: BLE001 — 발견 실패가 데몬을 죽이면 안 됨
+                    log.warning("자동 발견 실패(%s): %s", h.host or "local", e)
         if set(merged) != set(self.targets):
-            log.info("감시 대상 %d개: %s", len(merged), ", ".join(sorted(merged)))
+            log.info("감시 대상 %d개: %s", len(merged), ", ".join(_label(t) for t in merged.values()))
         self.targets = merged
 
     # ---- Actions 프로토콜 구현 (텔레그램 봇이 호출) ----
-    def restart(self, name: str) -> str:
-        target = self.targets.get(name)
+    def restart(self, key: str) -> str:
+        target = self.targets.get(key) or self._find_by_name(key)
         if target is None:
-            return f"❌ 알 수 없는 서비스: {name}"
+            return f"❌ 알 수 없는 서비스: {key}"
         result = services.restart_target(target, self.cfg)
+        label = _label(target)
         if result.ok:
-            self.state.acknowledge_restart(name)
-            return nf.restart_done_message(name)
-        return f"❌ {name} 재시작 실패: {result.detail}"
+            self.state.acknowledge_restart(_tid(target))
+            return nf.restart_done_message(label)
+        return f"❌ {label} 재시작 실패: {result.detail}"
 
-    def ignore(self, name: str) -> None:
-        if name in self.targets:
-            self.state.snooze(name)
+    def ignore(self, key: str) -> None:
+        if key in self.targets:
+            self.state.snooze(key)
 
     def reboot(self) -> str:
         result = services.reboot_system(self.cfg)
         return "✅ 재부팅 명령 실행" if result.ok else f"❌ 재부팅 실패: {result.detail}"
 
-    def _sys_metrics(self):
-        """현재 PC 또는 (remote.host 설정 시) 원격 호스트의 전체 CPU/RAM."""
-        host = self.cfg.remote.host
+    def _find_by_name(self, name: str) -> Target | None:
+        return next((t for t in self.targets.values() if t.name == name), None)
+
+    # ---- 호스트별 시스템 메트릭 ----
+    def _hosts(self) -> list[HostConfig]:
+        return self.cfg.hosts
+
+    def _sys_metrics_for(self, host: str):
         return services.remote_system_metrics(host) if host else metrics.system_metrics()
 
-    def _top(self):
-        host = self.cfg.remote.host
+    def _top_for(self, host: str):
         n = self.cfg.system_alert.top_process_count
         if host:
             return services.remote_top_processes(host, n, self.cfg.exclude_services)
         return metrics.top_processes(n, self.cfg.exclude_services)
 
-    def _where(self) -> str:
-        return f" @{self.cfg.remote.host}" if self.cfg.remote.host else ""
-
     def status_text(self) -> str:
-        m = self._sys_metrics()
-        return f"🖥 <b>현재 상태{self._where()}</b>\n전체 CPU: {m.cpu_percent}% / RAM: {m.ram_percent}%"
+        lines = ["🖥 <b>현재 상태</b>"]
+        for h in self._hosts():
+            m = self._sys_metrics_for(h.host)
+            lines.append(f"  • {h.name}: CPU {m.cpu_percent}% / RAM {m.ram_percent}%")
+        return "\n".join(lines)
 
     def top_text(self) -> str:
-        procs = self._top()
-        lines = [f"<b>자원 상위 프로세스{self._where()}</b>"]
-        for p in procs:
-            lines.append(f"  • {p.name}: CPU {p.cpu_percent}% / RAM {p.ram_percent}%")
+        lines = ["<b>자원 상위 프로세스</b>"]
+        for h in self._hosts():
+            lines.append(f"<b>{h.name}</b>")
+            for p in self._top_for(h.host):
+                lines.append(f"  • {p.name}: CPU {p.cpu_percent}% / RAM {p.ram_percent}%")
         return "\n".join(lines)
 
     def services_text(self) -> str:
         if not self.targets:
-            return "감시 대상 서비스가 없습니다(config.targets / discovery)."
-        lines = [f"<b>감시 대상 서비스{self._where()}</b>"]
-        for name, t in self.targets.items():
-            u = services.target_usage(t, self.cfg.remote.host)
+            return "감시 대상 서비스가 없습니다(config.hosts / discovery)."
+        lines = ["<b>감시 대상 서비스</b>"]
+        for t in self.targets.values():
+            u = services.target_usage(t)
             tag = "" if u.available else " (대상 없음)"
-            lines.append(f"  • {name} [{t.type}]: CPU {u.cpu_percent}% / RAM {u.ram_percent}%{tag}")
+            lines.append(f"  • {_label(t)} [{t.type}]: CPU {u.cpu_percent}% / RAM {u.ram_percent}%{tag}")
         return "\n".join(lines)
 
     # ---- 메인 루프 ----
@@ -131,36 +149,41 @@ class Monitor:
     def _tick(self) -> None:
         # 0) 주기적 재발견(새 컨테이너/서비스 반영)
         self._refresh_targets()
-        # 1) 타겟별 감시
-        for name, target in list(self.targets.items()):
-            u = services.target_usage(target, self.cfg.remote.host)
+        # 1) 타겟별 감시 (각 타겟의 host 로 로컬/원격 측정)
+        for tid, target in list(self.targets.items()):
+            u = services.target_usage(target)
             if not u.available:
                 continue
-            event = self.state.update(name, u.cpu_percent, u.ram_percent)
-            self._emit(name, event, u.cpu_percent, u.ram_percent)
+            event = self.state.update(tid, u.cpu_percent, u.ram_percent)
+            self._emit(target, tid, event, u.cpu_percent, u.ram_percent)
 
-        # 2) 전체 고부하 '시스템 경보'
+        # 2) 호스트별 전체 고부하 '시스템 경보'
         if self.cfg.system_alert.enabled:
             self._check_system_alert()
 
-    def _emit(self, name: str, event: Event, cpu: float, ram: float) -> None:
+    def _emit(self, target: Target, tid: str, event: Event, cpu: float, ram: float) -> None:
         tm = self.cfg.timing
+        label = _label(target)
         if event == Event.WARN_ALERT:
-            self.notifier.send(nf.warn_message(name, cpu, ram, tm.alert_minutes))
+            self.notifier.send(nf.warn_message(label, cpu, ram, tm.alert_minutes))
         elif event == Event.DANGER_PROMPT:
-            self.notifier.send(nf.danger_message(name, cpu, ram, tm.restart_minutes), restart_buttons(name))
+            self.notifier.send(nf.danger_message(label, cpu, ram, tm.restart_minutes), restart_buttons(tid))
         elif event == Event.RECOVERY:
-            self.notifier.send(nf.recovery_message(name, cpu, ram))
+            self.notifier.send(nf.recovery_message(label, cpu, ram))
 
     def _check_system_alert(self) -> None:
-        m = self._sys_metrics()
-        over = m.cpu_percent >= self.cfg.thresholds.cpu_percent or m.ram_percent >= self.cfg.thresholds.ram_percent
-        if over and not self._sys_alerted:
-            procs = self._top()
-            self.notifier.send(nf.system_alert_message(m.cpu_percent, m.ram_percent, procs))
-            self._sys_alerted = True
-        elif not over:
-            self._sys_alerted = False
+        th = self.cfg.thresholds
+        for h in self._hosts():
+            m = self._sys_metrics_for(h.host)
+            over = m.cpu_percent >= th.cpu_percent or m.ram_percent >= th.ram_percent
+            if over and not self._sys_alerted.get(h.host):
+                procs = self._top_for(h.host)
+                suffix = f" @{h.host}" if h.host else ""
+                self.notifier.send(nf.system_alert_message(m.cpu_percent, m.ram_percent, procs) +
+                                   (f"\n(host: {h.name}{suffix})"))
+                self._sys_alerted[h.host] = True
+            elif not over:
+                self._sys_alerted[h.host] = False
 
     def _write_heartbeat(self) -> None:
         try:

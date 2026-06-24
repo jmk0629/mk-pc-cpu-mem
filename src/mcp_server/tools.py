@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 # pcmon 패키지를 재사용 (src 가 sys.path 에 있다는 전제 — pyproject 설정)
-from pcmon import metrics, services
-from pcmon.config import Config
+from pcmon import discovery, metrics, services
+from pcmon.config import Config, Target
 from pcmon.telegram_bot import _command_allowed, _exec_command
 
 
@@ -30,13 +30,26 @@ def get_metrics() -> dict[str, Any]:
     }
 
 
+def _all_targets(cfg: Config) -> list[Target]:
+    """hosts 별 system + 명시적 + 자동발견 타겟을 평탄화(멀티호스트)."""
+    targets: list[Target] = []
+    for h in cfg.hosts:
+        if h.system:
+            targets.append(Target(name=h.name, type="system", match="", host=h.host))
+        targets.extend(h.targets)
+        if h.discovery:
+            targets.extend(discovery.discover_for(cfg, h.host))
+    return targets
+
+
 def list_services() -> dict[str, Any]:
     cfg = _cfg()
     out = []
-    for t in cfg.targets:
-        u = services.target_usage(t, cfg.remote.host)
+    for t in _all_targets(cfg):
+        u = services.target_usage(t)
         out.append({
             "name": t.name,
+            "host": t.host,
             "type": t.type,
             "cpu_percent": u.cpu_percent,
             "ram_percent": u.ram_percent,
@@ -47,7 +60,7 @@ def list_services() -> dict[str, Any]:
 
 def restart_service(name: str) -> dict[str, Any]:
     cfg = _cfg()
-    target = next((t for t in cfg.targets if t.name == name), None)
+    target = next((t for t in _all_targets(cfg) if t.name == name), None)
     if target is None:
         return {"ok": False, "detail": f"알 수 없는 서비스: {name}"}
     r = services.restart_target(target, cfg)

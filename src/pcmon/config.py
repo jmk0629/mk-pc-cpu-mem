@@ -59,8 +59,9 @@ class ControlConfig:
 @dataclass
 class Target:
     name: str
-    type: str  # docker | systemd | launchd | process
+    type: str  # system | docker | systemd | launchd | process
     match: str
+    host: str = ""  # "" = 로컬, 아니면 SSH 별칭(이 타겟이 속한 호스트)
 
 
 @dataclass
@@ -79,8 +80,17 @@ class DiscoveryConfig:
 
 @dataclass
 class RemoteConfig:
-    host: str = ""               # SSH 별칭(예: keymedi1). 설정 시 docker/systemd/system 을
-                                 # ssh 로 원격 실행 → 현재 PC에서 다른 PC를 감시. 빈 값=로컬.
+    host: str = ""               # (레거시 단일 호스트) SSH 별칭. hosts 미사용 시 폴백.
+
+
+@dataclass
+class HostConfig:
+    """감시 대상 한 대(로컬 또는 원격). hosts 목록의 한 항목."""
+    name: str                                       # 표시 이름(예: Mac, 미니PC)
+    host: str = ""                                  # SSH 별칭, "" = 로컬
+    discovery: bool = False                         # 이 호스트에서 docker/systemd 자동 발견
+    system: bool = False                            # 이 호스트 전체(system) 감시 추가
+    targets: list[Target] = field(default_factory=list)  # 명시적 타겟
 
 
 @dataclass
@@ -95,6 +105,7 @@ class Config:
     system_alert: SystemAlertConfig = field(default_factory=SystemAlertConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
+    hosts: list[HostConfig] = field(default_factory=list)
 
     # ---- 로드 ----
     @classmethod
@@ -122,9 +133,11 @@ class Config:
         discovery = DiscoveryConfig(**_subset(data.get("discovery"), DiscoveryConfig))
         remote = RemoteConfig(**_subset(data.get("remote"), RemoteConfig))
         targets = [
-            Target(name=str(t["name"]), type=str(t.get("type", "process")), match=str(t["match"]))
+            Target(name=str(t["name"]), type=str(t.get("type", "process")), match=str(t["match"]),
+                   host=str(t.get("host", "")))
             for t in (data.get("targets") or [])
         ]
+        hosts = _parse_hosts(data, targets, discovery, remote)
         return cls(
             telegram=telegram,
             thresholds=thresholds,
@@ -136,7 +149,46 @@ class Config:
             system_alert=system_alert,
             discovery=discovery,
             remote=remote,
+            hosts=hosts,
         )
+
+
+def _parse_hosts(
+    data: dict[str, Any], targets: list[Target], discovery: DiscoveryConfig, remote: RemoteConfig
+) -> list[HostConfig]:
+    """hosts 목록 파싱. 없으면 레거시(remote/discovery/targets)에서 단일 호스트 합성.
+
+    멀티호스트: 한 모니터가 hosts 의 여러 대(로컬+원격)를 동시에 감시한다.
+    """
+    raw = data.get("hosts")
+    if raw:
+        out: list[HostConfig] = []
+        for h in raw:
+            hhost = str(h.get("host", ""))
+            htargets = [
+                Target(name=str(t["name"]), type=str(t.get("type", "process")),
+                       match=str(t.get("match", "")), host=hhost)
+                for t in (h.get("targets") or [])
+            ]
+            out.append(HostConfig(
+                name=str(h.get("name", hhost or "local")),
+                host=hhost,
+                discovery=bool(h.get("discovery", False)),
+                system=bool(h.get("system", False)),
+                targets=htargets,
+            ))
+        return out
+    # 레거시 폴백: 단일 호스트(remote.host) 에 기존 targets/discovery 적용
+    for t in targets:
+        if not t.host:
+            t.host = remote.host
+    return [HostConfig(
+        name=remote.host or "local",
+        host=remote.host,
+        discovery=discovery.enabled,
+        system=False,            # 명시적 system 타겟이 있으면 targets 로 이미 포함
+        targets=list(targets),
+    )]
 
 
 def _subset(raw: dict[str, Any] | None, dc_type: type) -> dict[str, Any]:
