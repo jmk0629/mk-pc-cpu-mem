@@ -114,4 +114,5 @@ MCP 클라이언트(텔레그램 브리지, Discord 봇, 코딩 에이전트)를
 ## 📁 히스토리
 
 기능을 추가할 때마다 `docs/features/YYYY-MM-DD-<slug>.md` 로 내용과 날짜를 기록한다.
-런타임 처리 흐름은 `docs/WORKFLOW.md`, 설계 배경/계획은 `docs/ARCHITECTURE.md`, `docs/PLAN.md` 참고.
+런타임 처리 흐름은 `docs/WORKFLOW.md`, 미니 PC 원격 감시/배포 설계는 `docs/REMOTE_MINIPC.md`,
+설계 배경/계획은 `docs/ARCHITECTURE.md`, `docs/PLAN.md` 참고.
