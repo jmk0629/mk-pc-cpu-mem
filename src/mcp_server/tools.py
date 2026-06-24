@@ -34,7 +34,7 @@ def list_services() -> dict[str, Any]:
     cfg = _cfg()
     out = []
     for t in cfg.targets:
-        u = services.target_usage(t)
+        u = services.target_usage(t, cfg.remote.host)
         out.append({
             "name": t.name,
             "type": t.type,

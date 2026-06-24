@@ -78,6 +78,12 @@ class DiscoveryConfig:
 
 
 @dataclass
+class RemoteConfig:
+    host: str = ""               # SSH 별칭(예: keymedi1). 설정 시 docker/systemd/system 을
+                                 # ssh 로 원격 실행 → 현재 PC에서 다른 PC를 감시. 빈 값=로컬.
+
+
+@dataclass
 class Config:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
@@ -88,6 +94,7 @@ class Config:
     exclude_services: list[str] = field(default_factory=list)
     system_alert: SystemAlertConfig = field(default_factory=SystemAlertConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
 
     # ---- 로드 ----
     @classmethod
@@ -113,6 +120,7 @@ class Config:
         control = ControlConfig(**_subset(data.get("control"), ControlConfig))
         system_alert = SystemAlertConfig(**_subset(data.get("system_alert"), SystemAlertConfig))
         discovery = DiscoveryConfig(**_subset(data.get("discovery"), DiscoveryConfig))
+        remote = RemoteConfig(**_subset(data.get("remote"), RemoteConfig))
         targets = [
             Target(name=str(t["name"]), type=str(t.get("type", "process")), match=str(t["match"]))
             for t in (data.get("targets") or [])
@@ -127,6 +135,7 @@ class Config:
             exclude_services=[str(s) for s in (data.get("exclude_services") or [])],
             system_alert=system_alert,
             discovery=discovery,
+            remote=remote,
         )
 
 

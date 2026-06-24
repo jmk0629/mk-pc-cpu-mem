@@ -71,23 +71,38 @@ class Monitor:
         result = services.reboot_system(self.cfg)
         return "✅ 재부팅 명령 실행" if result.ok else f"❌ 재부팅 실패: {result.detail}"
 
+    def _sys_metrics(self):
+        """현재 PC 또는 (remote.host 설정 시) 원격 호스트의 전체 CPU/RAM."""
+        host = self.cfg.remote.host
+        return services.remote_system_metrics(host) if host else metrics.system_metrics()
+
+    def _top(self):
+        host = self.cfg.remote.host
+        n = self.cfg.system_alert.top_process_count
+        if host:
+            return services.remote_top_processes(host, n, self.cfg.exclude_services)
+        return metrics.top_processes(n, self.cfg.exclude_services)
+
+    def _where(self) -> str:
+        return f" @{self.cfg.remote.host}" if self.cfg.remote.host else ""
+
     def status_text(self) -> str:
-        m = metrics.system_metrics()
-        return f"🖥 <b>현재 상태</b>\n전체 CPU: {m.cpu_percent}% / RAM: {m.ram_percent}%"
+        m = self._sys_metrics()
+        return f"🖥 <b>현재 상태{self._where()}</b>\n전체 CPU: {m.cpu_percent}% / RAM: {m.ram_percent}%"
 
     def top_text(self) -> str:
-        procs = metrics.top_processes(self.cfg.system_alert.top_process_count, self.cfg.exclude_services)
-        lines = ["<b>자원 상위 프로세스</b>"]
+        procs = self._top()
+        lines = [f"<b>자원 상위 프로세스{self._where()}</b>"]
         for p in procs:
             lines.append(f"  • {p.name}: CPU {p.cpu_percent}% / RAM {p.ram_percent}%")
         return "\n".join(lines)
 
     def services_text(self) -> str:
         if not self.targets:
-            return "감시 대상 서비스가 없습니다(config.targets)."
-        lines = ["<b>감시 대상 서비스</b>"]
+            return "감시 대상 서비스가 없습니다(config.targets / discovery)."
+        lines = [f"<b>감시 대상 서비스{self._where()}</b>"]
         for name, t in self.targets.items():
-            u = services.target_usage(t)
+            u = services.target_usage(t, self.cfg.remote.host)
             tag = "" if u.available else " (대상 없음)"
             lines.append(f"  • {name} [{t.type}]: CPU {u.cpu_percent}% / RAM {u.ram_percent}%{tag}")
         return "\n".join(lines)
@@ -118,7 +133,7 @@ class Monitor:
         self._refresh_targets()
         # 1) 타겟별 감시
         for name, target in list(self.targets.items()):
-            u = services.target_usage(target)
+            u = services.target_usage(target, self.cfg.remote.host)
             if not u.available:
                 continue
             event = self.state.update(name, u.cpu_percent, u.ram_percent)
@@ -138,10 +153,10 @@ class Monitor:
             self.notifier.send(nf.recovery_message(name, cpu, ram))
 
     def _check_system_alert(self) -> None:
-        m = metrics.system_metrics()
+        m = self._sys_metrics()
         over = m.cpu_percent >= self.cfg.thresholds.cpu_percent or m.ram_percent >= self.cfg.thresholds.ram_percent
         if over and not self._sys_alerted:
-            procs = metrics.top_processes(self.cfg.system_alert.top_process_count, self.cfg.exclude_services)
+            procs = self._top()
             self.notifier.send(nf.system_alert_message(m.cpu_percent, m.ram_percent, procs))
             self._sys_alerted = True
         elif not over:

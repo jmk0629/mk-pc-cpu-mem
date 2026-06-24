@@ -8,6 +8,7 @@ config.exclude_services 에 걸리는 항목(OS 기본 서비스 등)을 제외�
 """
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 
@@ -17,15 +18,19 @@ _CMD_TIMEOUT = 15
 
 
 def discover(cfg: Config) -> list[Target]:
-    """설정에 따라 docker/systemd 대상을 발견해 필터링한 Target 목록 반환."""
+    """설정에 따라 docker/systemd 대상을 발견해 필터링한 Target 목록 반환.
+
+    cfg.remote.host 가 있으면 원격 호스트(ssh)에서 발견 — 현재 PC에서 미니 PC 감시.
+    """
+    host = cfg.remote.host
     targets: list[Target] = []
     if not cfg.discovery.enabled:
         return targets
     if cfg.discovery.docker:
-        for name in _filter(_docker_names(), cfg.exclude_services):
+        for name in _filter(_docker_names(host), cfg.exclude_services):
             targets.append(Target(name=name, type="docker", match=name))
     if cfg.discovery.systemd:
-        for unit in _filter(_systemd_units(), cfg.exclude_services):
+        for unit in _filter(_systemd_units(host), cfg.exclude_services):
             display = unit[:-len(".service")] if unit.endswith(".service") else unit
             targets.append(Target(name=display, type="systemd", match=unit))
     return targets
@@ -48,20 +53,20 @@ def _filter(names: list[str], exclude: list[str]) -> list[str]:
     return out
 
 
-def _docker_names() -> list[str]:
-    if not shutil.which("docker"):
+def _docker_names(host: str = "") -> list[str]:
+    if not host and not shutil.which("docker"):
         return []
-    out = _run(["docker", "ps", "--format", "{{.Names}}"])
+    out = _run(["docker", "ps", "--format", "{{.Names}}"], host)
     return [l.strip() for l in out.splitlines() if l.strip()] if out else []
 
 
-def _systemd_units() -> list[str]:
-    if not shutil.which("systemctl"):
+def _systemd_units(host: str = "") -> list[str]:
+    if not host and not shutil.which("systemctl"):
         return []
     out = _run([
         "systemctl", "list-units", "--type=service", "--state=running",
         "--no-legend", "--no-pager", "--plain",
-    ])
+    ], host)
     units: list[str] = []
     if out:
         for line in out.splitlines():
@@ -71,9 +76,21 @@ def _systemd_units() -> list[str]:
     return units
 
 
-def _run(cmd: list[str]) -> str | None:
+# SSH 옵션은 services 와 공유(연결 재사용).
+_SSH_OPTS = [
+    "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+    "-o", "ControlMaster=auto", "-o", "ControlPersist=60s",
+    "-o", "ControlPath=~/.ssh/cm-pcmon-%r@%h:%p",
+]
+
+
+def _run(cmd: list[str], host: str = "") -> str | None:
+    if host:
+        full = ["ssh", *_SSH_OPTS, host, " ".join(shlex.quote(a) for a in cmd)]
+    else:
+        full = cmd
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=_CMD_TIMEOUT)
+        r = subprocess.run(full, capture_output=True, text=True, timeout=_CMD_TIMEOUT)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
     return r.stdout.strip() if r.returncode == 0 else None
