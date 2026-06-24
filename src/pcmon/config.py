@@ -70,6 +70,14 @@ class SystemAlertConfig:
 
 
 @dataclass
+class DiscoveryConfig:
+    enabled: bool = False        # 켜면 exclude 제외 후 docker/systemd 자동 감시
+    docker: bool = True
+    systemd: bool = True
+    refresh_minutes: int = 5     # 새 컨테이너/서비스 재발견 주기
+
+
+@dataclass
 class Config:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
@@ -79,6 +87,7 @@ class Config:
     targets: list[Target] = field(default_factory=list)
     exclude_services: list[str] = field(default_factory=list)
     system_alert: SystemAlertConfig = field(default_factory=SystemAlertConfig)
+    discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
 
     # ---- 로드 ----
     @classmethod
@@ -103,6 +112,7 @@ class Config:
         watchdog = WatchdogConfig(**_subset(data.get("watchdog"), WatchdogConfig))
         control = ControlConfig(**_subset(data.get("control"), ControlConfig))
         system_alert = SystemAlertConfig(**_subset(data.get("system_alert"), SystemAlertConfig))
+        discovery = DiscoveryConfig(**_subset(data.get("discovery"), DiscoveryConfig))
         targets = [
             Target(name=str(t["name"]), type=str(t.get("type", "process")), match=str(t["match"]))
             for t in (data.get("targets") or [])
@@ -116,6 +126,7 @@ class Config:
             targets=targets,
             exclude_services=[str(s) for s in (data.get("exclude_services") or [])],
             system_alert=system_alert,
+            discovery=discovery,
         )
 
 

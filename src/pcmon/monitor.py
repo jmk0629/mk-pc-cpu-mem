@@ -11,7 +11,9 @@ import signal
 import time
 from pathlib import Path
 
-from . import metrics, notifier as nf, services
+import time
+
+from . import discovery, metrics, notifier as nf, services
 from .config import Config, Target
 from .notifier import Notifier, restart_buttons
 from .state import Event, StateMachine
@@ -25,9 +27,30 @@ class Monitor:
         self.cfg = cfg
         self.notifier = Notifier(cfg)
         self.state = StateMachine(cfg)
-        self.targets: dict[str, Target] = {t.name: t for t in cfg.targets}
+        self._explicit: dict[str, Target] = {t.name: t for t in cfg.targets}
+        self.targets: dict[str, Target] = dict(self._explicit)
+        self._last_discovery = 0.0
         self._running = True
         self._sys_alerted = False
+        self._refresh_targets(force=True)
+
+    def _refresh_targets(self, force: bool = False) -> None:
+        """명시적 타겟 + (활성화 시) 자동 발견 타겟 병합. 주기적으로 재발견."""
+        if not self.cfg.discovery.enabled:
+            return
+        now = time.monotonic()
+        if not force and (now - self._last_discovery) < self.cfg.discovery.refresh_minutes * 60:
+            return
+        self._last_discovery = now
+        merged = dict(self._explicit)  # 명시적 타겟 우선
+        try:
+            for t in discovery.discover(self.cfg):
+                merged.setdefault(t.name, t)
+        except Exception as e:  # noqa: BLE001 — 발견 실패가 데몬을 죽이면 안 됨
+            log.warning("자동 발견 실패: %s", e)
+        if set(merged) != set(self.targets):
+            log.info("감시 대상 %d개: %s", len(merged), ", ".join(sorted(merged)))
+        self.targets = merged
 
     # ---- Actions 프로토콜 구현 (텔레그램 봇이 호출) ----
     def restart(self, name: str) -> str:
@@ -91,8 +114,10 @@ class Monitor:
         log.info("monitor 종료")
 
     def _tick(self) -> None:
+        # 0) 주기적 재발견(새 컨테이너/서비스 반영)
+        self._refresh_targets()
         # 1) 타겟별 감시
-        for name, target in self.targets.items():
+        for name, target in list(self.targets.items()):
             u = services.target_usage(target)
             if not u.available:
                 continue

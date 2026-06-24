@@ -14,6 +14,7 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 
 import psutil
@@ -21,6 +22,10 @@ import psutil
 from .config import Config, Target
 
 _CMD_TIMEOUT = 20
+
+# systemd CPU% 산출용 직전 샘플 캐시: unit -> (monotonic_ts, cpu_usage_nsec)
+# CPUUsageNSec 는 누적값이라 두 시점 차분이 필요(psutil prime 과 동일 원리).
+_systemd_cpu_cache: dict[str, tuple[float, int]] = {}
 
 
 def current_platform() -> str:
@@ -49,9 +54,47 @@ def target_usage(target: Target) -> Usage:
             return _system_usage()
         if target.type == "docker":
             return _docker_usage(target.match)
-        return _process_usage(target.match)  # systemd/launchd/process 공통 폴백
+        if target.type == "systemd":
+            return _systemd_usage(target.match)
+        return _process_usage(target.match)  # launchd/process 폴백
     except Exception:  # noqa: BLE001 — 측정 실패가 데몬을 죽이면 안 됨
         return Usage(0.0, 0.0, available=False)
+
+
+def _systemd_usage(unit: str) -> Usage:
+    """systemd 유닛의 cgroup 회계 기반 정확 측정(Linux 전용).
+
+    RAM% = MemoryCurrent / 전체메모리.  CPU% = ΔCPUUsageNSec / (Δt · ncpu).
+    첫 호출은 CPU 기준점만 잡고 0.0 반환(prime). 다음 주기부터 구간 평균.
+    """
+    if not shutil.which("systemctl"):
+        return Usage(0.0, 0.0, available=False)
+    out = _run(["systemctl", "show", unit, "-p", "MemoryCurrent", "-p", "CPUUsageNSec", "-p", "ActiveState"])
+    if out is None:
+        return Usage(0.0, 0.0, available=False)
+    fields = dict(
+        line.split("=", 1) for line in out.splitlines() if "=" in line
+    )
+    if fields.get("ActiveState") not in ("active", "activating", "reloading"):
+        return Usage(0.0, 0.0, available=False)
+
+    mem_bytes = _to_int(fields.get("MemoryCurrent"))
+    total = psutil.virtual_memory().total or 1
+    ram_pct = round(min(mem_bytes / total * 100.0, 100.0), 1) if mem_bytes >= 0 else 0.0
+
+    cpu_nsec = _to_int(fields.get("CPUUsageNSec"))
+    now = time.monotonic()
+    ncpu = psutil.cpu_count() or 1
+    cpu_pct = 0.0
+    prev = _systemd_cpu_cache.get(unit)
+    if prev and cpu_nsec >= 0:
+        prev_t, prev_nsec = prev
+        dt = now - prev_t
+        if dt > 0 and cpu_nsec >= prev_nsec:
+            cpu_pct = round(min((cpu_nsec - prev_nsec) / (dt * 1e9 * ncpu) * 100.0, 100.0), 1)
+    if cpu_nsec >= 0:
+        _systemd_cpu_cache[unit] = (now, cpu_nsec)
+    return Usage(cpu_pct, ram_pct)
 
 
 def _system_usage() -> Usage:
@@ -197,6 +240,13 @@ def _pct(s: str) -> float:
         return round(float(s.replace("%", "").strip()), 1)
     except ValueError:
         return 0.0
+
+
+def _to_int(s: str | None) -> int:
+    """systemctl 수치 파싱. 미설정은 '[not set]'/빈값 → -1(미가용 표시)."""
+    if not s or not s.strip().isdigit():
+        return -1
+    return int(s.strip())
 
 
 def _uid() -> int:

@@ -35,10 +35,18 @@ control:
   allow_run_command: false      # 원격 임의 명령 실행(브리지/ MCP). 기본 차단.
   command_allowlist: []         # allow_run_command=true 일 때 실행 허용 명령 prefix 목록
 
-# 감시 대상. type: system | docker | systemd | launchd | process
+# 자동 발견: 켜면 실행 중 docker 컨테이너 + systemd 서비스를 exclude_services 만 빼고 전부 감시.
+# (이미지의 'OS 기본 서비스 제외하고 전부 감시' 동작). 명시적 targets 와 합쳐진다.
+discovery:
+  enabled: false        # 미니 PC(Ubuntu) 배포 시 true 권장
+  docker: true
+  systemd: true
+  refresh_minutes: 5    # 새 컨테이너/서비스 재발견 주기
+
+# 명시적 감시 대상. type: system | docker | systemd | launchd | process
 #   system  — PC 한 대 전체(CPU/RAM)를 하나의 대상으로(match 무시). 재시작 대신 /reboot.
-#   docker  — 컨테이너(match=컨테이너명), systemd/launchd/process — 유닛/프로세스 매칭.
-# name 은 알림에 표기되는 이름.
+#   docker  — 컨테이너(match=컨테이너명), systemd — 유닛(cgroup 정확측정), process/launchd — 프로세스 매칭.
+# discovery.enabled=true 면 비워도 됨. name 은 알림에 표기되는 이름.
 targets:
   - { name: 내 Mac, type: system, match: local }
   # - { name: open-design, type: docker, match: open-design }
