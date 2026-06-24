@@ -36,18 +36,25 @@ class Monitor:
         self.state = StateMachine(cfg)
         self.targets: dict[str, Target] = {}
         self._last_discovery = 0.0
+        self._next_gap = 0.0           # 다음 재발견까지 최소 간격(초)
         self._running = True
         self._sys_alerted: dict[str, bool] = {}   # host alias -> 경보중 여부
         self._refresh_targets(force=True)
 
     # ---- 타겟 구성(멀티호스트) ----
     def _refresh_targets(self, force: bool = False) -> None:
-        """hosts 별로 system + 명시적 + (활성 시)자동발견 타겟을 병합. 주기적 재발견."""
+        """hosts 별로 system + 명시적 + (활성 시)자동발견 타겟을 병합. 주기적 재발견.
+
+        원격 발견이 비면(예: 부팅 직후 네트워크 미준비) 다음 틱에 빨리 재시도하고,
+        정상 발견되면 refresh_minutes 주기로 되돌린다.
+        """
         now = time.monotonic()
-        if not force and (now - self._last_discovery) < self.cfg.discovery.refresh_minutes * 60:
+        if not force and (now - self._last_discovery) < self._next_gap:
             return
         self._last_discovery = now
         merged: dict[str, Target] = {}
+        any_disc_host = False
+        disc_ok = True
         for h in self.cfg.hosts:
             if h.system:
                 t = Target(name=h.name, type="system", match="", host=h.host)
@@ -55,11 +62,20 @@ class Monitor:
             for t in h.targets:
                 merged[_tid(t)] = t
             if h.discovery:
+                any_disc_host = True
                 try:
-                    for t in discovery.discover_for(self.cfg, h.host):
-                        merged.setdefault(_tid(t), t)
+                    found = discovery.discover_for(self.cfg, h.host)
                 except Exception as e:  # noqa: BLE001 — 발견 실패가 데몬을 죽이면 안 됨
                     log.warning("자동 발견 실패(%s): %s", h.host or "local", e)
+                    found = []
+                if not found:
+                    disc_ok = False
+                for t in found:
+                    merged.setdefault(_tid(t), t)
+        # 발견 실패(콜드스타트 등)면 다음 틱에 빨리 재시도, 정상이면 5분 주기로.
+        retry_soon = any_disc_host and not disc_ok
+        self._next_gap = (max(self.cfg.timing.check_interval_seconds, 15)
+                          if retry_soon else self.cfg.discovery.refresh_minutes * 60)
         if set(merged) != set(self.targets):
             log.info("감시 대상 %d개: %s", len(merged), ", ".join(_label(t) for t in merged.values()))
         self.targets = merged

@@ -102,6 +102,43 @@ pytest -q                            # 단위 테스트
 python -m pcmon.monitor              # 로컬 실행 (config.yaml 필요)
 ```
 
+## 🖥 Mac 자동 실행 / 수동 켜고 끄기 (launchd)
+
+현재 Mac에는 LaunchAgent 두 개가 등록되어, **로그인하면 자동으로** `config.yaml`(멀티호스트:
+Mac + 미니PC) 감시가 시작되고 종료돼도 자동 재시작된다.
+
+- `~/Library/LaunchAgents/com.mkpc.monitor.plist` — 감시 데몬(RunAtLoad + KeepAlive)
+- `~/Library/LaunchAgents/com.mkpc.watchdog.plist` — 2분마다 heartbeat 점검
+- 실행 파일: `<repo>/venv/bin/python -m pcmon.monitor`, 설정: `<repo>/config.yaml`
+- 로그: `/tmp/pcmon-monitor.err`(데몬 로그), `/tmp/pcmon-watchdog.log`
+
+### 수동 제어 (`UID=$(id -u)`)
+
+```bash
+# 끄기 (지금 멈추고, 자동 시작도 해제)
+launchctl bootout gui/$(id -u)/com.mkpc.monitor
+launchctl bootout gui/$(id -u)/com.mkpc.watchdog
+
+# 켜기 (다시 등록 + 즉시 시작 + 자동 시작 활성)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mkpc.monitor.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mkpc.watchdog.plist
+
+# 재시작 (설정/코드 변경 반영)
+launchctl kickstart -k gui/$(id -u)/com.mkpc.monitor
+
+# 상태 / 로그 확인
+launchctl list | grep mkpc          # PID / 마지막 종료코드
+tail -f /tmp/pcmon-monitor.err      # 실시간 로그 (감시 대상·알림)
+```
+
+> 끄면(`bootout`) 다시 `bootstrap` 하기 전까지 로그인해도 자동 시작되지 않는다.
+> 일시 정지만 하려면 `launchctl kill TERM gui/$(id -u)/com.mkpc.monitor`(KeepAlive 가 곧 되살림).
+> 잠깐만 직접 띄워 보려면 launchd 없이: `PYTHONPATH=src ./venv/bin/python -m pcmon.monitor`
+> (이때 launchd 데몬은 먼저 꺼두기 — 같은 봇으로 알림이 중복될 수 있음).
+
+> ⚠️ Mac이 꺼져 있거나 로그아웃 상태면 그동안은 감시되지 않는다. 미니 PC의 24시간 감시가
+> 필요하면 미니 PC에 직접 설치하는 편이 정답이다(`docs/REMOTE_MINIPC.md` 모드 A).
+
 ## 🔌 MCP 확장 (원격 운영/개발)
 
 ```bash
