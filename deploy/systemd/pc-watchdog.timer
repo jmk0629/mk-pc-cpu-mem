@@ -1,0 +1,13 @@
+# watchdog.py 를 2분마다 자동 실행하는 스케줄러
+# 설치: sudo systemctl enable --now pc-watchdog.timer
+[Unit]
+Description=mk-pc-cpu-mem watchdog 주기 실행 (2분)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=10s
+Unit=pc-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS: monitor 데몬 자동 시작. 설치:
+     cp 후 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mkpc.monitor.plist
+     경로/사용자는 환경에 맞게 수정. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mkpc.monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/pc-monitor/venv/bin/python</string>
+        <string>-m</string>
+        <string>pcmon.monitor</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PCMON_CONFIG</key>
+        <string>/opt/pc-monitor/config.yaml</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/opt/pc-monitor</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/pcmon-monitor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/pcmon-monitor.err</string>
+</dict>
+</plist>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS: watchdog 를 2분(120초)마다 실행 (systemd .timer 대응) -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mkpc.watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/pc-monitor/venv/bin/python</string>
+        <string>-m</string>
+        <string>pcmon.watchdog</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PCMON_CONFIG</key>
+        <string>/opt/pc-monitor/config.yaml</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>120</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/pcmon-watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/pcmon-watchdog.err</string>
+</dict>
+</plist>

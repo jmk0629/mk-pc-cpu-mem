@@ -1,0 +1,7 @@
+# mk-pc-cpu-mem 런타임 의존성 (최소 의존)
+psutil>=5.9          # CPU/RAM/프로세스 수집 (크로스플랫폼)
+PyYAML>=6.0          # config.yaml 파싱
+requests>=2.31       # Telegram Bot API 호출
+
+# MCP 서버 스켈레톤(확장 포인트) — 없으면 mcp_server 만 비활성, 코어는 정상 동작
+# mcp>=1.0

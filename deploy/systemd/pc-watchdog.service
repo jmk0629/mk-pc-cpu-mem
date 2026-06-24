@@ -1,0 +1,11 @@
+# watchdog.py 1회 실행 유닛 (pc-watchdog.timer 가 주기 호출)
+[Unit]
+Description=mk-pc-cpu-mem watchdog (monitor heartbeat 점검)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/pc-monitor
+Environment=PCMON_CONFIG=/opt/pc-monitor/config.yaml
+ExecStart=/opt/pc-monitor/venv/bin/python -m pcmon.watchdog
+User=root

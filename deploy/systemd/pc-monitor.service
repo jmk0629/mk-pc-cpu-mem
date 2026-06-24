@@ -1,0 +1,21 @@
+# monitor.py 를 시스템 서비스로 등록 (Ubuntu 부팅 시 자동 시작)
+# 설치: deploy/install.sh 참고. 적용: sudo systemctl restart pc-monitor
+[Unit]
+Description=mk-pc-cpu-mem monitor daemon (CPU/RAM 감시 + 텔레그램 알림)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pc-monitor
+Environment=PCMON_CONFIG=/opt/pc-monitor/config.yaml
+# 토큰을 파일 대신 환경변수로 주입하려면 아래 사용(권장):
+# EnvironmentFile=/opt/pc-monitor/pcmon.env
+ExecStart=/opt/pc-monitor/venv/bin/python -m pcmon.monitor
+Restart=always
+RestartSec=5
+# 서비스 재시작/재부팅 제어가 필요하므로 root 또는 적절한 권한 부여
+User=root
+
+[Install]
+WantedBy=multi-user.target
